@@ -86,4 +86,9 @@ def append_row(payload: AppendPayload, x_api_key: str = Header(default=None)):
         ws.append_row(row, value_input_option="USER_ENTERED")
         return {"status":"ok", "appended": dict(zip(COLUMNS, row))}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    if __name__ == "__main__":
+        import uvicorn
+        port = int(os.environ.get("PORT", 8000))
+        uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
