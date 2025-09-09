@@ -3,7 +3,7 @@ info:
   title: Humetime Excel Action (Google Sheets)
   version: "1.0.0"
 servers:
-  - url: https://<TON_URL_RENDER>
+  - url: https://humetime-server.onrender.com
 paths:
   /append:
     post:

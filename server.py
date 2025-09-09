@@ -1,5 +1,3 @@
-# 1) Remplacer server.py par la version Google Sheets (sans pandas)
-cat > server.py << 'PY'
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
@@ -19,14 +17,17 @@ REPAS_ALIASES = {
 }
 
 def normalize_repas(v: str) -> Optional[str]:
-    if not v: return None
+    if not v: 
+        return None
     t = v.strip().lower()
     for canon, aliases in REPAS_ALIASES.items():
-        if t == canon or t in aliases: return canon
+        if t == canon or t in aliases:
+            return canon
     tt = f" {t} "
     for canon, aliases in REPAS_ALIASES.items():
         for a in set(list(aliases)+[canon]):
-            if f" {a} " in tt: return canon
+            if f" {a} " in tt:
+                return canon
     return None
 
 class AppendPayload(BaseModel):
@@ -48,7 +49,13 @@ class AppendPayload(BaseModel):
 API_SECRET = os.getenv("HUMETIME_API_SECRET", "")
 
 app = FastAPI(title="Humetime Excel Action (Sheets)", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_sheet():
     sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -80,17 +87,3 @@ def append_row(payload: AppendPayload, x_api_key: str = Header(default=None)):
         return {"status":"ok", "appended": dict(zip(COLUMNS, row))}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-PY
-
-# 2) S’assurer que requirements.txt ne contient PAS pandas
-cat > requirements.txt << 'REQ'
-fastapi
-uvicorn
-gspread
-google-auth
-REQ
-
-# 3) Commit & push
-git add server.py requirements.txt
-git commit -m "Use Google Sheets version (no pandas)"
-git push
