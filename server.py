@@ -1,29 +1,16 @@
-# -*- coding: utf-8 -*-
-"""
-API locale Humetime
-- POST /append : ajoute une ligne au tableur Excel iCloud.
-"""
-
-from fastapi import FastAPI, HTTPException
+# 1) Remplacer server.py par la version Google Sheets (sans pandas)
+cat > server.py << 'PY'
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from typing import Optional
 from datetime import datetime
-import pandas as pd
-import os
+import os, json
 
-# >>> Chemin Excel cible (iCloud) <<<
-OUTPUT_XLSX = r"/Users/admin/Library/Mobile Documents/com~apple~CloudDocs/00 etc./03 Projets/Humetime/distribution_log.xlsx"
+import gspread
+from google.oauth2.service_account import Credentials
 
-COLUMNS = [
-    "horodatage",
-    "nb_patients",
-    "duree_distribution_min",
-    "repas",
-    "nb_personnes",
-    "notes_libres",
-    "source_message",
-]
+COLUMNS = ["horodatage","nb_patients","duree_distribution_min","repas","nb_personnes","notes_libres","source_message"]
 
 REPAS_ALIASES = {
     "petit déjeuner": {"petit déjeuner","petit-dejeuner","petit dejeuner","breakfast","matin","pdj"},
@@ -31,67 +18,79 @@ REPAS_ALIASES = {
     "soir": {"soir","dîner","diner","souper","repas du soir","dinner"},
 }
 
-def normalize_repas(value: str) -> Optional[str]:
-    if not value:
-        return None
-    t = value.strip().lower()
+def normalize_repas(v: str) -> Optional[str]:
+    if not v: return None
+    t = v.strip().lower()
     for canon, aliases in REPAS_ALIASES.items():
-        if t == canon or t in aliases:
-            return canon
+        if t == canon or t in aliases: return canon
     tt = f" {t} "
     for canon, aliases in REPAS_ALIASES.items():
-        for a in set(list(aliases) + [canon]):
-            if f" {a} " in tt:
-                return canon
+        for a in set(list(aliases)+[canon]):
+            if f" {a} " in tt: return canon
     return None
 
 class AppendPayload(BaseModel):
     horodatage: Optional[str] = None
     nb_patients: int = Field(..., ge=0)
     duree_distribution_min: int = Field(..., ge=0)
-    repas: str = Field(..., description="petit déjeuner | midi | soir (synonymes acceptés)")
+    repas: str
     nb_personnes: int = Field(..., ge=0)
     notes_libres: Optional[str] = ""
     source_message: Optional[str] = ""
 
     @validator("repas")
-    def _valide_repas(cls, v):
+    def _repas(cls, v):
         canon = normalize_repas(v)
         if not canon:
             raise ValueError("repas doit être 'petit déjeuner', 'midi' ou 'soir' (synonymes acceptés).")
         return canon
 
-app = FastAPI(title="Humetime Excel Action", version="1.0.0")
+API_SECRET = os.getenv("HUMETIME_API_SECRET", "")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Humetime Excel Action (Sheets)", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-def ensure_excel():
-    folder = os.path.dirname(OUTPUT_XLSX)
-    if folder and not os.path.exists(folder):
-        os.makedirs(folder, exist_ok=True)
-    if not os.path.exists(OUTPUT_XLSX):
-        pd.DataFrame(columns=COLUMNS).to_excel(OUTPUT_XLSX, index=False)
+def get_sheet():
+    sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not sa_json:
+        raise RuntimeError("Env var GOOGLE_SERVICE_ACCOUNT_JSON manquante")
+    info = json.loads(sa_json)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    gc = gspread.authorize(creds)
+    sheet_id = os.getenv("SHEET_ID")
+    if not sheet_id:
+        raise RuntimeError("Env var SHEET_ID manquante")
+    sheet_name = os.getenv("SHEET_NAME", "Feuille1")
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet(sheet_name)
+    return ws
 
 @app.post("/append")
-def append_row(payload: AppendPayload):
+def append_row(payload: AppendPayload, x_api_key: str = Header(default=None)):
+    if API_SECRET and x_api_key != API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     try:
-        ensure_excel()
+        ws = get_sheet()
         data = payload.dict()
         if not data.get("horodatage"):
             data["horodatage"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        df = pd.read_excel(OUTPUT_XLSX) if os.path.exists(OUTPUT_XLSX) else pd.DataFrame(columns=COLUMNS)
-        for c in COLUMNS:
-            if c not in data:
-                data[c] = ""
-        df = pd.concat([df, pd.DataFrame([data])[COLUMNS]], ignore_index=True)
-        df.to_excel(OUTPUT_XLSX, index=False)
-        return {"status": "ok", "appended": data}
+        row = [str(data.get(c, "")) for c in COLUMNS]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        return {"status":"ok", "appended": dict(zip(COLUMNS, row))}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+PY
+
+# 2) S’assurer que requirements.txt ne contient PAS pandas
+cat > requirements.txt << 'REQ'
+fastapi
+uvicorn
+gspread
+google-auth
+REQ
+
+# 3) Commit & push
+git add server.py requirements.txt
+git commit -m "Use Google Sheets version (no pandas)"
+git push
